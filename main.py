@@ -4,9 +4,7 @@ from flask import Flask, render_template, redirect, url_for, flash, request
 from flask_bootstrap import Bootstrap
 from flask_ckeditor import CKEditor
 from datetime import date
-from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.orm import relationship
 from flask_login import UserMixin, login_user, LoginManager, login_required, current_user, logout_user
 from forms import CreatePostForm, RegisterForm, LoginForm, CommentForm
 from flask_gravatar import Gravatar
@@ -17,7 +15,6 @@ def admin_only(func):
     def wrapper(*args, **kwargs):
         user_id = current_user.id
         if user_id != 1:
-            print('You are not admin!!!')
             return render_template('forbidden.html')
         return func(*args, **kwargs)
     return wrapper
@@ -25,11 +22,12 @@ def admin_only(func):
 
 app = Flask(__name__)
 # app.config['SECRET_KEY'] = '8BYkEfBA6O6donzWlSihBXox7C0sKR6b'
-app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY")
+app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", '8BYkEfBA6O6donzWlSihBXox7C0sKR6b')
 ckeditor = CKEditor(app)
 Bootstrap(app)
 
 ##CONNECT TO DB
+# app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///blog.db'
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get("DATABASE_URL", 'sqlite:///blog.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -106,25 +104,14 @@ current_username: str = None
 
 def fetch_posts():
     posts.clear()
-    # all_posts = db.session.query(BlogPost, Comment, User)\
     all_posts = db.session.query(BlogPost, User)\
             .filter(User.id == BlogPost.author_id)\
             .all()
-            # .filter(BlogPost.id == Comment.post_id)\
-            # .join(User)\
-            # .add_columns(BlogPost.id, User.name)\
-            # .filter(BlogPost)
-    # print(len(all_posts), all_posts)
-    # print(all_posts)
-    # for post, comment, user in all_posts:
     for post, user in all_posts:
         post = post.to_dict()
-        # comment = comment.to_dict()
         user = user.to_dict()
-        # print(post, '\n', comment, '\n', user, '\n')
         post['author'] = user['name']
         posts.append(post)
-    print(len(posts), posts)
 
 
 @app.route('/')
@@ -150,12 +137,10 @@ def register():
             password=form.password.data,
             name=name_inp
         )
-        print('new_user', new_user)
         try:
             db.session.add(new_user)
             db.session.commit()
         except Exception as e:
-            print('e', e)
             flash(str(e))
             return redirect(url_for('register'))
         login_user(new_user)
@@ -169,7 +154,6 @@ def login():
         email_inp = form.email.data
         password_inp = form.password.data
         found_user = User.query.filter(User.email == email_inp).first()
-        print('found_user', found_user)
         if found_user is None:
             flash('Not found email')
             return redirect(url_for('login'))
@@ -206,21 +190,18 @@ def get_comments_by_post_id(post_id: int):
                 .filter(Comment.post_id == post_id)\
                 .filter(Comment.user_id == User.id)\
                 .all()
-    for comment, user in comments:
-        print('Here...\n', comment.to_dict(), '\n', user.to_dict(), '\n.........')
-        comment = comment.to_dict()
+    for c, user in comments:
+        c = c.to_dict()
         user = user.to_dict()
-        comment['author'] = user['name']
-        comment['email'] = user['email']
-        comment_show.append(comment)
+        c['author'] = user['name']
+        c['email'] = user['email']
+        comment_show.append(c)
     # comments = Comment.query.filter(Comment.post_id == post_id).all()
-    # print(comments)
     return comment_show
 
 
 @app.route("/post/<int:post_id>", methods=['GET', 'POST'])
 def show_post(post_id):
-    print('post_id', post_id)
     comment_form = CommentForm()
     requested_post = get_post(post_id, for_db=False)
     comments_of_post = get_comments_by_post_id(post_id)
@@ -236,7 +217,6 @@ def show_post(post_id):
 @app.route("/comment/<int:post_id>", methods=['POST'])
 @login_required
 def comment(post_id):
-    print('comment!!!')
     form = CommentForm()
     new_comment = Comment(
         text=form.text.data,
@@ -250,12 +230,12 @@ def comment(post_id):
 
 @app.route("/about")
 def about():
-    return render_template("about.html")
+    return render_template("about.html", logged_in=current_user.is_authenticated)
 
 
 @app.route("/contact")
 def contact():
-    return render_template("contact.html")
+    return render_template("contact.html", logged_in=current_user.is_authenticated)
 
 
 @app.route("/new-post", methods=['GET', 'POST'])
@@ -275,7 +255,10 @@ def add_new_post():
         db.session.add(new_post)
         db.session.commit()
         return redirect(url_for("get_all_posts"))
-    return render_template("make-post.html", form=form, logged_in=current_user.is_authenticated)
+    return render_template("make-post.html",
+                           form=form,
+                           logged_in=current_user.is_authenticated,
+                           is_edit=False)
 
 
 @app.route("/edit-post/<int:post_id>", methods=['GET', 'POST'])
@@ -285,7 +268,6 @@ def edit_post(post_id):
     edit_form = CreatePostForm()
     if edit_form.validate_on_submit():
         post = get_post(post_id, for_db=True)
-        print(edit_form.title.data)
         post.title = edit_form.title.data
         post.subtitle = edit_form.subtitle.data
         post.img_url = edit_form.img_url.data
@@ -302,7 +284,11 @@ def edit_post(post_id):
         author=post['author'],
         body=post['body']
     )
-    return render_template("make-post.html", form=edit_form, post=post, logged_in=current_user.is_authenticated)
+    return render_template("make-post.html",
+                           form=edit_form,
+                           post=post,
+                           logged_in=current_user.is_authenticated,
+                           is_edit=True)
 
 
 @app.route("/delete/<int:post_id>")
